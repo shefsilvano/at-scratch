@@ -21,13 +21,14 @@
 
 //handles
 static QueueHandle_t uart_queue2;
-static SemaphoreHandle_t xSensorReady;
+static SemaphoreHandle_t xDummyHandle;
 static TaskHandle_t xInit; 
 static BaseType_t init; 
 //variables
 char uart_at_buffer[UART_SIM_BUFFER]; 
 uint16_t uart_at_index =0; 
 bool success =false; 
+bool init_success = false; 
 
 //functions 
 static void uart_event_task_sim (void *arg);
@@ -38,11 +39,12 @@ bool sendATCommand(char* command, char* expectedResponse, int timeoutMs);
 bool parse_data(uint8_t* data, size_t len, int timeout_ms , const char* word); 
 //tags 
 static const char *TAG_SIM = "UART_SIM_LOG";
+void send_at_cont (void); 
 
 
 void app_main(void)
 {
-// xSensorReady = xSemaphoreCreateBinary();
+   //  xDummyHandle = xSemaphoreCreateBinary();
     //xTaskCreate(uart_event_task_sim,"uart_event_sim", 4096, NULL,5,NULL); 
     init = xTaskCreate(module_init, "mod-init", 4096, NULL, 5, &xInit);
     configASSERT(init==pdPASS); 
@@ -70,7 +72,8 @@ void init_uart (uart_port_t uart_num, int tx, int rx, int baud){
 
 void sim7000G_init (void){
     ESP_LOGI(TAG_SIM,"UART for Sim7000G has been initialized"); 
-    init_uart(UART_PORT_SIM, UART_SIM_TX, UART_SIM_RX, 115200);
+    init_uart(UART_PORT_SIM, UART_SIM_TX, UART_SIM_RX, 115200); 
+
     uart_flush_input(UART_PORT_SIM);
 
      gpio_config_t io_conf = {
@@ -102,6 +105,10 @@ void module_init(void *arg){
             if (success)
             {
                 printf("Module Initialization done successfully with final count: %d", counter);
+                init_success = true; 
+                send_at_cont();
+                vTaskDelete(NULL); 
+                   
             } 
 
             else
@@ -109,6 +116,8 @@ void module_init(void *arg){
                 printf("Module Initialization fail, with count:%d\n ",counter);
             }
             counter++; 
+
+       
     }
 }
 
@@ -157,9 +166,8 @@ bool parse_data(uint8_t* data, size_t len, int timeout_ms , const char* word) //
         if (bytes_read > 0)
         {
             // Append the received data to the buffer
-            // strncat(resp, (const char*)data, bytes_read); a
-            
-            
+            strncat(resp, (const char*)data, bytes_read); 
+        
 
             // Check if the word is present in the buffer
             if (strstr(resp, word) != NULL)
@@ -170,4 +178,20 @@ bool parse_data(uint8_t* data, size_t len, int timeout_ms , const char* word) //
     }
     
     return false;
+}
+
+void send_at_cont (void){
+        if (init_success){
+            sendATCommand("AT+CGREG?\r\n","+CGREG: 0,1",500);
+            sendATCommand("AT+CMNB=1\r\n","OK",500); 
+            sendATCommand("AT+CMGF=1\r\n","OK",500); 
+            sendATCommand("AT+CSCS=\"GSM\"\r\n","OK",500);
+            
+            //shall be toggled when data is already processed.
+            sendATCommand("AT+CMGS=\"09555425524\"\r\n", ">", 1000); 
+            vTaskDelay(500); 
+            uart_write_bytes(UART_PORT_SIM,"Send test with ESP-IDF\x1A", strlen("Send test with ESP-IDF\x1A")); 
+            init_success = false; 
+        }
+     
 }
